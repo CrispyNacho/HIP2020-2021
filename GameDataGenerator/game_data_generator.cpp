@@ -1,23 +1,49 @@
 #include <stdio.h>   /* printf */
 #include <stdlib.h>  /* atoi */
 #include <string>    /* string class */
-#include <random>    /* random_device, mt19937, uniform_int_distribution */
+#include <list>      /* list class */
+#include <random>    /* random_device, mt19937, uniform_real_distribution */
 #include <time.h>    /* clock */
-#include <math.h>    /* M_PI define, sqrt */
+#include <fstream>   /* ofstream class */
 
 using namespace std;
 
-const int bytesPerPixel = 3; // red, green, blue
-const int fileHeaderSize = 14;
-const int infoHeaderSize = 40;
+// #define DEBUG // Uncomment this for debug prints
 
-#define MIN_DEFORMITY_RADIUS 1
-#define MAX_NONE_RATIO 0.05
-#define MAX_LOW_RATIO 0.40
-#define MAX_MEDIUM_RATIO 0.60
-#define MAX_HIGH_RATIO 1
+#define NUM_ARGS 3
+#define NUM_STATS 3
 
-#define CLASSIFICATION_FILENAME "classification.txt"
+#define MAX_NUM_TEAMS 30
+
+#define MIN_WIP_RATIO 0.75
+#define MAX_WIP_RATIO 1.25
+
+#define MIN_RBI_RATIO 0.75
+#define MAX_RBI_RATIO 1.25
+
+#define MIN_WAR_RATIO 0.75
+#define MAX_WAR_RATIO 1.25
+
+#define GAME_STATS_FILENAME "game_stats.csv"
+#define GAME_RESULTS_FILENAME "game_results.csv"
+
+typedef struct {
+    int   gameNum;  // Game Number
+    int   homeCode; // Home Team Code
+    int   awayCode; // Away Team Code
+    float WIPRatio; // WIP Ratio (Home / Away)
+    float RBIRatio; // RBI Ratio (Home / Away)
+    float WARRatio; // WAR Ratio (Home / Away)
+    bool  homeWin;  // Home Team Win or Loss
+} GameData_t;
+
+enum WinnerBias {
+    NONE = 0,   // No Bias, flip a coin
+    PREFER_WIP, // Prefer team with higher WIP
+    PREFER_RBI, // Prefer team with higher RBI
+    PREFER_WAR, // Prefer team with higher WAR
+    PREFER_AVG  // Prefer team with higher average stat ratio
+};
 
 void generateBitmapImage(unsigned char *image, int height, int width, int pitch, const char* imageFileName);
 unsigned char* createBitmapFileHeader(int height, int width, int pitch, int paddingSize);
@@ -26,290 +52,153 @@ void addDeformity(unsigned char *image, int height, int width, int pitch, int ma
 
 void printUsage(char* progName)
 {
-    printf("USAGE: %s <image height> <image width> <number of images to create>", progName);
-    printf(" <maximum deformity radius>\n");
+    printf("USAGE: %s <number of teams> <number of times each team plays another> <winner bias>\n", progName);
+    printf("    Winner Bias:\n");
+    printf("        0 = None (random)\n");
+    printf("        1 = Prefer Higher WIP Ratio\n");
+    printf("        2 = Prefer Higher RBI Ratio\n");
+    printf("        3 = Prefer Higher WAR Ratio\n");
+    printf("        4 = Prefer Higher Avergae Ratio\n");
     return;
 }
 
-int calcMinLowRadius(int height, int width)
-{
-   return (sqrt(((height * width) * (MAX_NONE_RATIO + 0.01))/M_PI));
-}
+void writeGameDataFiles(std::list<GameData_t> & gameData) {
+    std::ofstream gameStatsFile(GAME_STATS_FILENAME);
+    std::ofstream gameResultsFile(GAME_RESULTS_FILENAME);
 
-int calcMinMediumRadius(int height, int width)
-{
-   return (sqrt(((height * width) * (MAX_LOW_RATIO + 0.01))/M_PI));
-}
+    int gameNum = 0;
+    for(auto iter = gameData.begin(); iter != gameData.end(); iter++, gameNum++) {
+        // Game Data Schema: Game #, Team code Home, Team code Away,  WIP Ratio Home to Away, RBI Ratio Home to Away, WAR Home to Away
+        string homeAway = std::to_string(gameNum) + ',' + std::to_string(iter->homeCode) + ',' + std::to_string(iter->awayCode) + ',';
+        string data = homeAway + std::to_string(iter->WIPRatio) + ',';
+        data += std::to_string(iter->RBIRatio) + ',' + std::to_string(iter->WARRatio) + '\n';
 
-int calcMinHighRadius(int height, int width)
-{
-   return (sqrt(((height * width) * (MAX_MEDIUM_RATIO + 0.01))/M_PI));
-}
+        // Game Results Schema: Game #, Team code Home, Team code Away,  Home Team Win?
+        string results = homeAway + (iter->homeWin == true ? "true" : "false") + '\n';
 
-void writeClassificationFile(FILE *classFile, string fileName, int height, int width, unsigned int radius)
-{
-    unsigned int lowRadiusBoundary = calcMinLowRadius(height, width);
-    unsigned int medRadiusBoundary = calcMinMediumRadius(height, width);
-    unsigned int highRadiusBoundary = calcMinHighRadius(height, width);
-    string classification = "";
-
-    if(radius < lowRadiusBoundary)
-    {
-       classification  = ", None\n";
-    }
-
-    else if(radius >= lowRadiusBoundary && radius < medRadiusBoundary)
-    {
-       classification  = ", Low\n";
-    }
-
-    else if(radius >= medRadiusBoundary && radius < highRadiusBoundary)
-    {
-       classification  = ", Medium\n";
-    }
-
-    else if(radius >= highRadiusBoundary)
-    {
-       classification  = ", High\n";
-    }
-
-    else
-    {
-       // This shouldn't be possible, but is captured for completeness of code
-       printf("ERROR: Radius outside of classificaiton parameters!\n");
-    }
-
-#if defined(DEBUG)
-    printf("Image %s, Radius = %u, Min Low R = %u, Min Med R = %u, Min High R = %u!\n",
-          fileName.c_str(), radius,
-          lowRadiusBoundary, medRadiusBoundary, highRadiusBoundary);
+#ifdef DEBUG
+        printf("Data = \"%s\n\"", data.c_str());
+        printf("Results = \"%s\n\"", results.c_str());
 #endif
-    fwrite(fileName.c_str(), 1, fileName.size(), classFile);
-    fwrite(classification.c_str(), 1, classification.size(), classFile);
+        gameStatsFile << data;
+        gameResultsFile << results;
+    }
+
+    gameStatsFile.close();
+    gameResultsFile.close();
 }
 
-/***
- * main
- * Command Line Parameters -
- *   image height
- *   image width
- *   number of images to create
- *   max deformity radius
- **/
-int main(int argc, char* argv[])
-{
-    if(argc < 4)
-    {
-        printf("ERROR: invalid number of command line parameters\n");
-        printUsage(argv[0]);
-        return -1;
-    }
-    int height = atoi(argv[1]);
-    int width = atoi(argv[2]);
-    int numOfImages = atoi(argv[3]);
-    int maxRadius = atoi(argv[4]);
-
-    if((maxRadius > height/2) || (maxRadius > width/2))
-    {
-        printf("ERROR: Max radius too large. Must be less than half the width and height\n");
-        printUsage(argv[0]);
-        return -1;
-    }
-
-    clock_t tStart = clock();
-    int pitch = width*bytesPerPixel;
-    unsigned char image[height][width][bytesPerPixel];
-    string imageFileName;
-    string classFileName = CLASSIFICATION_FILENAME;
-    FILE* classFile = fopen(classFileName.c_str(), "a");
-
-    // Set up the random number generator for the radius and deformity center
+void generateGameData(std::list<GameData_t> & gameData, WinnerBias bias) {
+    // Set up the random number generator for the WIP, RBI, and WAR values
     // Obtain a random number from hardware
     std::random_device rd;
     // Seed the generator
     std::mt19937 eng(rd());
 
-    // Define the range the length of the radius can be in (0 means no deformity)
-    std::uniform_int_distribution<> radiusDistr(MIN_DEFORMITY_RADIUS, maxRadius);
+    // Define the range the different ratios can be
+    std::uniform_real_distribution<> WIPDistr(MIN_WIP_RATIO, MAX_WIP_RATIO);
+    std::uniform_real_distribution<> RBIDistr(MIN_RBI_RATIO, MAX_RBI_RATIO);
+    std::uniform_real_distribution<> WARDistr(MIN_WAR_RATIO, MAX_WAR_RATIO);
 
-    int pixelRow, pixelCol, imageNum;
-    for(imageNum = 1; imageNum <= numOfImages; imageNum++)
-    {
-        imageFileName = "bitmap" + std::to_string(imageNum) + ".bmp";
-#if !defined(TESTING)
-        // Choose the random length of the radius
-        unsigned int radius = radiusDistr(eng);
-        // Define the columns the deformity center can be in
-        /*
-         * NOTE: Since the ranges for the center of the deformity are dependent on the radius
-         * to keep the deformity completely within the image, those ranges must be determined
-         * after the radius has been chosen.
-         * NOTE: The range has to be one less than the boundary minus the radius to keep the
-         * deformity from touching the edge of the image.
-         */
-        std::uniform_int_distribution<> colDistr(radius+1, width-radius-1);
-        // Choose the random column for the center of the deformity
-        unsigned int deformityCenterCol = colDistr(eng);
-        // Define the rows the deformity center can be in
-        std::uniform_int_distribution<> rowDistr(radius+1, height-radius-1);
-        // Choose the random row for the center of the deformity
-        unsigned int deformityCenterRow = rowDistr(eng);
-#else
-        // Fixed coordinates for testing
-        unsigned int radius = 20;
-        unsigned int deformityCenterRow = 21;
-        unsigned int deformityCenterCol = 21;
-#endif
+    std::binomial_distribution<> coinFlipper(1, 0.5); // Generate random numbers between 0 and 1 with 50% chance
 
-        printf("Deformity location [%u, %u], radius = %u\n",
-               deformityCenterRow, deformityCenterCol, radius);
+    // TODO: Currently the ratios are all random and have no history. A possible
+    // enhancment could be to have their ratios make sense over time
+    for(auto iter = gameData.begin(); iter != gameData.end(); iter++) {
+        iter->WIPRatio = WIPDistr(eng);
+        iter->RBIRatio = RBIDistr(eng);
+        iter->WARRatio = WARDistr(eng);
 
-        for(pixelRow=0; pixelRow<height; pixelRow++)
-        {
-            for(pixelCol=0; pixelCol<width; pixelCol++)
-            {
-#if defined(SQUARE_DEFORMITY)
-                /*
-                 * For a square deformity, just see if the current "pixel" is within a "radius"
-                 * of the center.
-                 */
-                if(((pixelRow>(deformityCenterRow-radius)) &&
-                    (pixelRow<(deformityCenterRow+radius))) &&
-                   ((pixelCol>(deformityCenterCol-radius)) &&
-                    (pixelCol<(deformityCenterCol+radius))))
-#else
-                /*
-                 * It is necessary to use the Pythagorean Theorem for a circular deformity.
-                 * First, calculate the number of rows and the number of columns away from the
-                 * the deformity center that the pixel is. Sum the squares of both of these numbers.
-                 * Then, take the square root. If the result is less than the value of the radius,
-                 * the pixel is within the bounds of the deformity. Note that absolute values must be
-                 * used where the pixel's coordinates are of lower value than the center.
-                 */
-                unsigned int pixelRowDist = ((pixelRow<deformityCenterRow)?
-                                             (deformityCenterRow - pixelRow):
-                                             (pixelRow - deformityCenterRow));
-                unsigned int pixelColDist = ((pixelCol<deformityCenterCol)?
-                                             (deformityCenterCol - pixelCol):
-                                             (pixelCol - deformityCenterCol));
-                unsigned int pixelSumOfSquares = pixelRowDist*pixelRowDist +
-                                                 pixelColDist*pixelColDist;
-                unsigned int radiusSquare = radius*radius;
-#if defined(DEBUG)
-                if(pixelSumOfSquares < radiusSquare)
-                {
-                   printf("Pixel [%u,%u] is %u rows and %u columns from Dcenter at [%u,%u]\n",
-                          pixelRow, pixelCol,
-                          pixelRowDist, pixelColDist,
-                          deformityCenterRow, deformityCenterCol);
-                   printf("A^2 + B^2 = %u, radius^2 = %u\n", pixelSumOfSquares, radiusSquare);
-                }
-#endif
-                if(pixelSumOfSquares < radiusSquare)
-#endif
-                {
-#if defined(DEBUG)
-                    printf("Setting black at [%u, %u]\n", pixelRow, pixelCol);
-#endif
-                    // Set to black to represent deformity
-                    image[pixelRow][pixelCol][2] = (unsigned char)(0); ///red
-                    image[pixelRow][pixelCol][1] = (unsigned char)(0); ///green
-                    image[pixelRow][pixelCol][0] = (unsigned char)(0); ///blue
-                }
-                else
-                {
-                    // Set to white as the regular image
-                    image[pixelRow][pixelCol][2] = (unsigned char)(255); ///red
-                    image[pixelRow][pixelCol][1] = (unsigned char)(255); ///green
-                    image[pixelRow][pixelCol][0] = (unsigned char)(255); ///blue
-                }
-            }
+        float avg;
+        switch(bias) {
+            case PREFER_WIP: // Prefer team with higher WIP
+                iter->homeWin = iter->WIPRatio > 1.0 ? true : false;
+                break;
+            case PREFER_RBI: // Prefer team with higher RBI
+                iter->homeWin = iter->RBIRatio > 1.0 ? true : false;
+                break;
+            case PREFER_WAR: // Prefer team with higher WAR
+                iter->homeWin = iter->WARRatio > 1.0 ? true : false;
+                break;
+            case PREFER_AVG: // Prefer team with higher average stat ratio
+                avg = (iter->WARRatio + iter->RBIRatio + iter->WIPRatio) / NUM_STATS;
+                iter->homeWin =  avg > 1.0 ? true : false;
+                break;
+            default: // No Bias, flip a coin
+                iter->homeWin = coinFlipper(eng) == 1 ? true : false;
         }
-        generateBitmapImage((unsigned char *)image, height, width, pitch, imageFileName.c_str());
-        writeClassificationFile(classFile, imageFileName, height, width, radius);
-        printf("Image %s generated!\n", imageFileName.c_str());
+
+#ifdef DEBUG
+        printf("homeCode = %d, awayCode = %d\n", iter->homeCode, iter->awayCode);
+        printf("WIPRatio = %f, RBIRatio = %f, WARRatio = %f\n", iter->WIPRatio, iter->RBIRatio, iter->WARRatio);
+        printf("homeWin = %s\n\n", iter->homeWin == true ? "True" : "False");
+#endif
     }
-    fclose(classFile);
+}
+
+void determineTeamPermutations(int numTeams, int numGamesPerTeam, std::list<GameData_t> & gameData) {
+    GameData_t newData;
+
+    // Obtain a random number from hardware
+    std::random_device rd;
+    // Seed the generator
+    std::mt19937 eng(rd());
+    std::binomial_distribution<> coinFlipper(1, 0.5); // Generate random numbers between 0 and 1
+
+    // Loop through the number of times each team should play every other team
+    for(int i = 0; i < numGamesPerTeam; i++) {
+        int currTeam = 0;
+        // Iterate until each team has played every other team once
+        while(currTeam != numTeams) {
+            // Generate games of the current team playing the remaining teams
+            for(int j = currTeam; j < numTeams - 1; j++) {
+                int coinFlip = coinFlipper(eng); // Flip a coin to see who's the home team
+                if(coinFlip) {
+                    newData.homeCode = currTeam;
+                    newData.awayCode = j + 1;
+                }
+                else {
+                    newData.homeCode = j + 1;
+                    newData.awayCode = currTeam;
+                }
+                gameData.push_back(newData);
+            }
+            currTeam++;
+        }
+    }
+}
+
+/***
+ * main
+ * Command Line Parameters -
+ *   number of teams to generate data for
+ *   number of times every team plays each other
+ **/
+int main(int argc, char* argv[])
+{
+    if(argc != NUM_ARGS + 1)
+    {
+        printf("ERROR: invalid number of command line parameters\n");
+        printUsage(argv[0]);
+        return -1;
+    }
+
+    clock_t tStart = clock();
+    int numTeams = atoi(argv[1]);
+    int numGamesPerTeam = atoi(argv[2]);
+    WinnerBias bias = (WinnerBias)atoi(argv[3]);
+
+    std::list<GameData_t> gameData;
+
+    // Determine the possible team permutations based on the input arguments
+    determineTeamPermutations(numTeams, numGamesPerTeam, gameData);
+
+    // Generate game data for the different teams
+    generateGameData(gameData, bias);
+
+    // Write game data results to files
+    writeGameDataFiles(gameData);
+
     printf("Time taken: %.2fs\n", (double)(clock() - tStart)/CLOCKS_PER_SEC);
     return 0;
-}
-
-void generateBitmapImage(unsigned char *image, int height, int width, int pitch,
-                         const char* imageFileName)
-{
-    unsigned char padding[3] = {0, 0, 0};
-    int paddingSize = (4 - (pitch) % 4) % 4;
-
-    unsigned char* fileHeader = createBitmapFileHeader(height, width, pitch, paddingSize);
-    unsigned char* infoHeader = createBitmapInfoHeader(height, width);
-
-    FILE* imageFile = fopen(imageFileName, "wb");
-
-    fwrite(fileHeader, 1, fileHeaderSize, imageFile);
-    fwrite(infoHeader, 1, infoHeaderSize, imageFile);
-
-    int i;
-
-    for(i=0; i<height; i++)
-    {
-        fwrite(image+(i*pitch), bytesPerPixel, width, imageFile);
-        fwrite(padding, 1, paddingSize, imageFile);
-    }
-
-    fclose(imageFile);
-}
-
-unsigned char* createBitmapFileHeader(int height, int width, int pitch, int paddingSize)
-{
-    int fileSize = fileHeaderSize + infoHeaderSize + (pitch+paddingSize) * height;
-
-    static unsigned char fileHeader[] =
-    {
-        0,0, /// signature
-        0,0,0,0, /// image file size in bytes
-        0,0,0,0, /// reserved
-        0,0,0,0, /// start of pixel array
-    };
-
-    fileHeader[ 0] = (unsigned char)('B');
-    fileHeader[ 1] = (unsigned char)('M');
-    fileHeader[ 2] = (unsigned char)(fileSize);
-    fileHeader[ 3] = (unsigned char)(fileSize>>8);
-    fileHeader[ 4] = (unsigned char)(fileSize>>16);
-    fileHeader[ 5] = (unsigned char)(fileSize>>24);
-    fileHeader[10] = (unsigned char)(fileHeaderSize + infoHeaderSize);
-
-    return fileHeader;
-}
-
-unsigned char* createBitmapInfoHeader(int height, int width)
-{
-    static unsigned char infoHeader[] =
-    {
-        0,0,0,0, /// header size
-        0,0,0,0, /// image width
-        0,0,0,0, /// image height
-        0,0, /// number of color planes
-        0,0, /// bits per pixel
-        0,0,0,0, /// compression
-        0,0,0,0, /// image size
-        0,0,0,0, /// horizontal resolution
-        0,0,0,0, /// vertical resolution
-        0,0,0,0, /// colors in color table
-        0,0,0,0, /// important color count
-    };
-
-    infoHeader[ 0] = (unsigned char)(infoHeaderSize);
-    infoHeader[ 4] = (unsigned char)(width);
-    infoHeader[ 5] = (unsigned char)(width>>8);
-    infoHeader[ 6] = (unsigned char)(width>>16);
-    infoHeader[ 7] = (unsigned char)(width>>24);
-    infoHeader[ 8] = (unsigned char)(height);
-    infoHeader[ 9] = (unsigned char)(height>>8);
-    infoHeader[10] = (unsigned char)(height>>16);
-    infoHeader[11] = (unsigned char)(height>>24);
-    infoHeader[12] = (unsigned char)(1);
-    infoHeader[14] = (unsigned char)(bytesPerPixel*8);
-
-    return infoHeader;
 }
