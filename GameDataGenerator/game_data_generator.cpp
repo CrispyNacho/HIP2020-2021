@@ -15,6 +15,8 @@ using namespace std;
 
 #define MAX_NUM_TEAMS 30
 
+// Adjust these constants to change the range of
+// possible values of each randomized stat
 #define MIN_WIP_RATIO 0.75
 #define MAX_WIP_RATIO 1.25
 
@@ -45,11 +47,10 @@ enum WinnerBias {
     PREFER_AVG  // Prefer team with higher average stat ratio
 };
 
-void generateBitmapImage(unsigned char *image, int height, int width, int pitch, const char* imageFileName);
-unsigned char* createBitmapFileHeader(int height, int width, int pitch, int paddingSize);
-unsigned char* createBitmapInfoHeader(int height, int width);
-void addDeformity(unsigned char *image, int height, int width, int pitch, int maxRadius, string fname);
 
+/**
+ * Outputs how to use this program to the console
+ ***/
 void printUsage(char* progName)
 {
     printf("USAGE: %s <number of teams> <number of times each team plays another> <winner bias>\n", progName);
@@ -62,18 +63,26 @@ void printUsage(char* progName)
     return;
 }
 
+/**
+ * Description:
+ *  Writes the game data to 2 files, a game data file and a game results file
+ *
+ * Inputs:
+ *  | gameData | Container that contains the game data to write to the output files |
+ * Returns: None
+ ***/
 void writeGameDataFiles(std::list<GameData_t> & gameData) {
     std::ofstream gameStatsFile(GAME_STATS_FILENAME);
     std::ofstream gameResultsFile(GAME_RESULTS_FILENAME);
 
     int gameNum = 0;
     for(auto iter = gameData.begin(); iter != gameData.end(); iter++, gameNum++) {
-        // Game Data Schema: Game #, Team code Home, Team code Away,  WIP Ratio Home to Away, RBI Ratio Home to Away, WAR Home to Away
+        // Game Data Schema: Game #, Team Code Home, Team Code Away,  WIP Ratio Home to Away, RBI Ratio Home to Away, WAR Home to Away
         string homeAway = std::to_string(gameNum) + ',' + std::to_string(iter->homeCode) + ',' + std::to_string(iter->awayCode) + ',';
         string data = homeAway + std::to_string(iter->WIPRatio) + ',';
         data += std::to_string(iter->RBIRatio) + ',' + std::to_string(iter->WARRatio) + '\n';
 
-        // Game Results Schema: Game #, Team code Home, Team code Away,  Home Team Win?
+        // Game Results Schema: Game #, Team Code Home, Team Code Away,  Home Team Win
         string results = homeAway + (iter->homeWin == true ? "true" : "false") + '\n';
 
 #ifdef DEBUG
@@ -88,6 +97,16 @@ void writeGameDataFiles(std::list<GameData_t> & gameData) {
     gameResultsFile.close();
 }
 
+/**
+ * Description:
+ *  Populates gameData with random stat ratios of the home vs away teams. The winner of each
+ *  game is decided by the bias we pass in as an argument.
+ *
+ * Inputs:
+ *  | gameData | Container to fill with the various randomized stats                       |
+ *  | bias     | How the outcome of the game should be determined based on the stat ratios |
+ * Returns: None
+ ***/
 void generateGameData(std::list<GameData_t> & gameData, WinnerBias bias) {
     // Set up the random number generator for the WIP, RBI, and WAR values
     // Obtain a random number from hardware
@@ -136,6 +155,19 @@ void generateGameData(std::list<GameData_t> & gameData, WinnerBias bias) {
     }
 }
 
+
+/**
+ * Description:
+ *  Populates gameData with team combinations where how many times each team will play another team
+ *  is determined by the numGamesPerTeam argument. The team that is the home team is randmonly determined
+ *  by flipping a coin.
+ *
+ * Inputs:
+ *  | numTeams        | Total number of teams to create permutations with                 |
+ *  | numGamesPerTeam | Total number of games that each team should play every other team |
+ *  | gameData        | Container to fill with the various team permutations              |
+ * Returns: None
+ ***/
 void determineTeamPermutations(int numTeams, int numGamesPerTeam, std::list<GameData_t> & gameData) {
     GameData_t newData;
 
@@ -173,6 +205,7 @@ void determineTeamPermutations(int numTeams, int numGamesPerTeam, std::list<Game
  * Command Line Parameters -
  *   number of teams to generate data for
  *   number of times every team plays each other
+ *   win bias to use when determining game outcomes
  **/
 int main(int argc, char* argv[])
 {
