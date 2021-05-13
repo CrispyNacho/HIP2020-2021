@@ -15,3 +15,5 @@ Once you have the compiler set up, open up a cmd prompt at the GameDataGenerator
 - `g++ game_data_generator.cpp -o game_data_generator`
 
 This will compile the .cpp file and output an executable that you can then run.
+
+Kenny edited this
